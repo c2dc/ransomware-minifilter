@@ -45,7 +45,7 @@ bool getProcessImageFileName(DWORD PID, std::wstring &result){
 // TODO: Search for a better way to convert do driver letter path
 void ConvertToDriveLetterPath(std::string& path) {
 	std::string result = path;
-	int pos = result.find_first_of("\\", 1);
+	size_t pos = result.find_first_of("\\", 1);
 	pos = result.find_first_of("\\", pos + 1);
 	path.erase(0, pos+1);
 	result = "C:\\" + path;
@@ -59,6 +59,7 @@ void DoWork(HANDLE hDevice) {
 	yaraEngine.setYaraRuleFile("C:\\Users\\Leonardo\\Desktop\\yara_rules.txt");
 	yaraEngine.InitializeYara();
 
+	NASTYWARE_MON_PROCESS tempProcess{0};
 
 	// Maybe change to invert call model using device IOCTLs
 	while (true) {
@@ -77,8 +78,11 @@ void DoWork(HANDLE hDevice) {
 		
 		if (currentProcImagePath.size() > 0) {
 			bool isRansomware = yaraEngine.YaraScanFile(currentProcImagePath);
+			tempProcess.processId = currentProcPid;
 			if (isRansomware) {
 				std::cout << "Ransomware identified in file : " << currentProcImagePath << std::endl;
+				tempProcess.isRansomware = true;
+				DeviceIoControl(hDevice, IOCTL_NASTYWARE_MON_KILL_PROCESS, &tempProcess, sizeof(NASTYWARE_MON_PROCESS), nullptr, 0, nullptr, nullptr);
 			}
 			else {
 				std::cout << "File identified as goodware : " << currentProcImagePath << std::endl;

@@ -1,11 +1,12 @@
+#include <ntifs.h>
 #include "NastywareKernel.h"
 #include "RansMonCommon.h"
+
 #define MAX_PROCESS_LIST_SIZE 1024
 
 NTSTATUS RansMonitorCreateClose(PDEVICE_OBJECT, PIRP);
 NTSTATUS RansMonitorDeviceIoControl(PDEVICE_OBJECT, PIRP);
 NTSTATUS RansMonitorRead(PDEVICE_OBJECT, PIRP);
-NTSTATUS RansMonitorWrite(PDEVICE_OBJECT, PIRP);
 
 void CreateProcessNotifyRoutine(PEPROCESS, HANDLE, PPS_CREATE_NOTIFY_INFO);
 void RansMonitorUnload(PDRIVER_OBJECT);
@@ -63,11 +64,10 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 	DriverObject->DriverUnload = RansMonitorUnload;
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = DriverObject->MajorFunction[IRP_MJ_CLOSE] = RansMonitorCreateClose;
 	DriverObject->MajorFunction[IRP_MJ_READ] = RansMonitorRead;
-	DriverObject->MajorFunction[IRP_MJ_WRITE] = RansMonitorWrite;
+	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = RansMonitorDeviceIoControl;
 
 	return status;
 }
-
 
 NTSTATUS auxCompleteIrp(PIRP Irp, NTSTATUS status = STATUS_SUCCESS, ULONG information = 0) {
 	Irp->IoStatus.Status = status;
@@ -76,13 +76,58 @@ NTSTATUS auxCompleteIrp(PIRP Irp, NTSTATUS status = STATUS_SUCCESS, ULONG inform
 	return status;
 }
 
+NTSTATUS RansMonitorDeviceIoControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
+	UNREFERENCED_PARAMETER(DeviceObject);
+	PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+	NTSTATUS status = STATUS_SUCCESS;
+
+	switch (stack->Parameters.DeviceIoControl.IoControlCode) {
+	case IOCTL_NASTYWARE_MON_KILL_PROCESS: {
+		if (stack->Parameters.DeviceIoControl.InputBufferLength < sizeof(NASTYWARE_MON_PROCESS)) {
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		PNASTYWARE_MON_PROCESS process = (PNASTYWARE_MON_PROCESS)stack->Parameters.DeviceIoControl.Type3InputBuffer;
+		if (process == nullptr) {
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		OBJECT_ATTRIBUTES oa;
+		CLIENT_ID cid;
+		HANDLE hProcess;
+		cid.UniqueProcess = ULongToHandle(process->processId);
+		cid.UniqueThread = 0;
+
+		InitializeObjectAttributes(&oa, NULL, OBJ_KERNEL_HANDLE, NULL, NULL);
+		if (!NT_SUCCESS(status = ZwOpenProcess(&hProcess, PROCESS_ALL_ACCESS, &oa, &cid))) {
+			return auxCompleteIrp(Irp, status);
+		}
+
+		if (!NT_SUCCESS(status = ZwTerminateProcess(hProcess, 1))) {
+			ZwClose(hProcess);
+			return auxCompleteIrp(Irp, status);
+		};
+		ZwClose(hProcess);
+			
+	
+			KdPrint(("Process terminated\n"));
+			break;
+		}
+	default:
+		break;
+	}
+
+	return auxCompleteIrp(Irp, status,0);
+
+}
+
 NTSTATUS RansMonitorCreateClose(PDEVICE_OBJECT, PIRP Irp) {
 	return auxCompleteIrp(Irp);
 }
 
-NTSTATUS RansMonitorWrite(PDEVICE_OBJECT , PIRP Irp) {
-	return auxCompleteIrp(Irp);
-}
+
 
 NTSTATUS RansMonitorRead(PDEVICE_OBJECT , PIRP Irp) {
 
