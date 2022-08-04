@@ -56,7 +56,8 @@ void DoWork(HANDLE hDevice) {
 
 	// Mude o PATH do arquivo rules !!
 	YaraRansEngine yaraEngine;
-	yaraEngine.setYaraRuleFile("C:\\Users\\Leonardo\\Desktop\\yara_rules.txt");
+	yaraEngine.setYaraRuleFile("C:\\yara_rules\\Ransomware.yar");
+
 	yaraEngine.InitializeYara();
 
 	NASTYWARE_MON_PROCESS tempProcess{0};
