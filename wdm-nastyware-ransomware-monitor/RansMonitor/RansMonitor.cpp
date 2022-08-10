@@ -108,12 +108,13 @@ NTSTATUS RansMonitorDeviceIoControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 		if (!NT_SUCCESS(status = ZwTerminateProcess(hProcess, 1))) {
 			ZwClose(hProcess);
 			return auxCompleteIrp(Irp, status);
-		};
+		}
 		ZwClose(hProcess);
-			
-	
-			KdPrint(("Process terminated\n"));
-			break;
+		KdPrint(("Process terminated\n"));
+		break;
+
+		
+
 		}
 	default:
 		break;
@@ -164,6 +165,19 @@ NTSTATUS RansMonitorRead(PDEVICE_OBJECT , PIRP Irp) {
 
 }
 
+bool isProcessInLinkedList(ULONG ProcessId) {
+	PLIST_ENTRY entry = g_Globals.listHead.Flink;
+	while (entry != &g_Globals.listHead) {
+		PNASTYWARE_MON_PROCESS_NODE process;
+		process = (PNASTYWARE_MON_PROCESS_NODE)CONTAINING_RECORD(entry, NASTYWARE_MON_PROCESS_NODE, Entry);
+		if (process->ProcessId == ProcessId)
+			return true;
+
+		entry = entry->Flink;
+	}
+	return false;
+}
+
 void CreateProcessNotifyRoutine(PEPROCESS, HANDLE PID, PPS_CREATE_NOTIFY_INFO CreateInfo) {
 	if (CreateInfo) {
 		PNASTYWARE_MON_PROCESS_NODE procNode = (PNASTYWARE_MON_PROCESS_NODE)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(NASTYWARE_MON_PROCESS_NODE), 'nskm');
@@ -173,6 +187,7 @@ void CreateProcessNotifyRoutine(PEPROCESS, HANDLE PID, PPS_CREATE_NOTIFY_INFO Cr
 		}
 		procNode->ProcessId = HandleToULong(PID);
 		PushItem(&procNode->Entry);
+		
 	}
 }
 
