@@ -22,7 +22,7 @@ GLOBALS g_Globals;
 
 
 // -------------------------------------------------------------
-//							DRIVER UNLOAD
+//                          DRIVER UNLOAD
 // -------------------------------------------------------------
 void DriverUnload(PDRIVER_OBJECT DriverObject) {
 	UNREFERENCED_PARAMETER(DriverObject);
@@ -33,7 +33,7 @@ void DriverUnload(PDRIVER_OBJECT DriverObject) {
 
 
 // -------------------------------------------------------------
-//							REGISTRY PROTECTION
+//                          REGISTRY PROTECTION
 // -------------------------------------------------------------
 bool ProtectedKey(PVOID Object, PUNICODE_STRING ValueName) {
 	PCUNICODE_STRING FullRegistryPath;
@@ -79,7 +79,7 @@ NTSTATUS OnRegistryNotify(PVOID Context, PVOID Argument1, PVOID Argument2) {
 
 
 // -------------------------------------------------------------
-//							PROCESS PROTECTION				   
+//                      PROCESS PROTECTION				   
 // -------------------------------------------------------------
 OB_PREOP_CALLBACK_STATUS ProcessProtect(PVOID RegistrationContext, POB_PRE_OPERATION_INFORMATION OperationInformation) {
 	UNREFERENCED_PARAMETER(RegistrationContext);
@@ -97,7 +97,7 @@ OB_PREOP_CALLBACK_STATUS ProcessProtect(PVOID RegistrationContext, POB_PRE_OPERA
 
 
 // -------------------------------------------------------------
-//							DRIVER ENTRY
+//                          DRIVER ENTRY
 // -------------------------------------------------------------
 extern "C"
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
