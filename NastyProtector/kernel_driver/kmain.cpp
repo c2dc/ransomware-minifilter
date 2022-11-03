@@ -12,6 +12,8 @@
 #define PROCESS_SUSPEND_RESUME 0x0800
 #define PROCESS_CREATE_THREAD 0x0002
 
+typedef LONG(*ZwSuspendProcessPtr)(PEPROCESS ProcessHandle);
+
 typedef struct {
 	LARGE_INTEGER RegistryCookie;
 	PVOID ProcessHookHandle;
@@ -19,6 +21,7 @@ typedef struct {
 } GLOBALS, *PGLOBALS;
 
 GLOBALS g_Globals;
+ZwSuspendProcessPtr ZwSuspendProcess = nullptr;
 
 
 // -------------------------------------------------------------
@@ -26,8 +29,8 @@ GLOBALS g_Globals;
 // -------------------------------------------------------------
 void DriverUnload(PDRIVER_OBJECT DriverObject) {
 	UNREFERENCED_PARAMETER(DriverObject);
-	CmUnRegisterCallback(g_Globals.RegistryCookie);
-	ObUnRegisterCallbacks(g_Globals.ProcessHookHandle);
+	//CmUnRegisterCallback(g_Globals.RegistryCookie);
+	//ObUnRegisterCallbacks(g_Globals.ProcessHookHandle);
 	KdPrint(("Driver : Unloaded.\n"));
 }
 
@@ -95,22 +98,58 @@ OB_PREOP_CALLBACK_STATUS ProcessProtect(PVOID RegistrationContext, POB_PRE_OPERA
 }
 
 
+void SuspendProcess(ULONG ProcessId) {
+	KdPrint(("Suspend process called...\n"));
+	UNICODE_STRING ProcName = RTL_CONSTANT_STRING(L"PsSuspendProcess");
+	ZwSuspendProcess = (ZwSuspendProcessPtr)MmGetSystemRoutineAddress(&ProcName);
+	if (ZwSuspendProcess == nullptr) {
+		KdPrint(("No function ZwSuspendProcess found\n"));
+		return;
+	}
+
+
+	KdPrint(("Got ZwSuspendProcess addresss\n"));
+
+	HANDLE ProcHandle = nullptr;
+	OBJECT_ATTRIBUTES ProcHandleAtt;
+	CLIENT_ID cid;
+	cid.UniqueProcess = UlongToHandle(ProcessId);
+	cid.UniqueThread = 0;
+	InitializeObjectAttributes(&ProcHandleAtt, 0, 0, 0, nullptr);
+	NTSTATUS status = ZwOpenProcess(&ProcHandle, PROCESS_SUSPEND_RESUME, &ProcHandleAtt, &cid);
+	KdPrint(("ZwOpenProcess executed\n"));
+	if (NT_SUCCESS(status)) {
+		PEPROCESS proc;
+
+		status = ObReferenceObjectByHandle(ProcHandle, PROCESS_SUSPEND_RESUME, *PsProcessType, KernelMode, (PVOID*)&proc, NULL);
+		if (NT_SUCCESS(status)) {
+			KdPrint(("Suspending process...\n"));
+			ULONG lret = ZwSuspendProcess(proc);
+			KdPrint(("Return value : %l\n", lret));
+			ObDereferenceObject(proc);
+		}
+		ZwClose(ProcHandle);
+	}
+}
+
 
 // -------------------------------------------------------------
 //                          DRIVER ENTRY
 // -------------------------------------------------------------
 extern "C"
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) {
-
+	KdPrint(("Loaded.\n"));
 	UNREFERENCED_PARAMETER(RegistryPath);
 	NTSTATUS retStatus = STATUS_SUCCESS;
 
 	// OUR USER-MODE PROCESS ID
-	g_Globals.ProcessId = 0L;
+	g_Globals.ProcessId = 1916L;
 	g_Globals.ProcessHookHandle = nullptr;
 
 	bool RegistryNotify = false;
 	bool ProcessNotify = false;
+	
+	SuspendProcess(g_Globals.ProcessId);
 
 	do {
 		UNICODE_STRING Altitude = RTL_CONSTANT_STRING(L"7657.124");

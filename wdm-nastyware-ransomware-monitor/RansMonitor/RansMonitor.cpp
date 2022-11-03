@@ -3,6 +3,9 @@
 #include "RansMonCommon.h"
 
 #define MAX_PROCESS_LIST_SIZE 1024
+#define PROCESS_SUSPEND_RESUME 0x0800
+
+typedef LONG(*PsSuspendResumeProcessPtr)(PEPROCESS);
 
 NTSTATUS RansMonitorCreateClose(PDEVICE_OBJECT, PIRP);
 NTSTATUS RansMonitorDeviceIoControl(PDEVICE_OBJECT, PIRP);
@@ -13,6 +16,11 @@ void RansMonitorUnload(PDRIVER_OBJECT);
 void Error(const char*, NTSTATUS);
 void PushItem(LIST_ENTRY*);
 
+void SuspendProcess(PEPROCESS);
+void ResumeProcess(PEPROCESS);
+
+PsSuspendResumeProcessPtr PsSuspendProcess = nullptr;
+PsSuspendResumeProcessPtr PsResumeProcess = nullptr;
 Globals g_Globals;
 
 extern "C"
@@ -23,6 +31,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 
 	g_Globals.Count = 0;
 	g_Globals.Mutex.Init();
+	g_Globals.ProcessAPI = false;
 	InitializeListHead(&g_Globals.listHead);
 
 	NTSTATUS status = STATUS_SUCCESS;
@@ -30,6 +39,18 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 	UNICODE_STRING deviceName = RTL_CONSTANT_STRING(L"\\Device\\RansMonitor");
 	UNICODE_STRING symbolicLink = RTL_CONSTANT_STRING(L"\\??\\ransmon");
 	bool symbolicLinkCreated = false;
+
+
+	// Get undocumented functions
+	UNICODE_STRING PsSuspendProcessName = RTL_CONSTANT_STRING(L"PsSuspendProcess");
+	UNICODE_STRING PsResumeProcessName = RTL_CONSTANT_STRING(L"PsResumeProcess");
+	PsSuspendProcess = (PsSuspendResumeProcessPtr)MmGetSystemRoutineAddress(&PsSuspendProcessName);
+	PsResumeProcess = (PsSuspendResumeProcessPtr)MmGetSystemRoutineAddress(&PsResumeProcessName);
+	if (PsSuspendProcess && PsResumeProcess)
+		g_Globals.ProcessAPI = true;
+
+
+	
 
 	do {
 
@@ -116,6 +137,40 @@ NTSTATUS RansMonitorDeviceIoControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 		
 
 		}
+	case IOCTL_NASTYWARE_MON_RESUME_PROCESS: {
+		if (stack->Parameters.DeviceIoControl.InputBufferLength < sizeof(NASTYWARE_MON_PROCESS)) {
+			status = STATUS_BUFFER_TOO_SMALL;
+			break;
+		}
+
+		PNASTYWARE_MON_PROCESS process = (PNASTYWARE_MON_PROCESS)stack->Parameters.DeviceIoControl.Type3InputBuffer;
+		if (process == nullptr) {
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+
+		HANDLE hProc = nullptr;
+		OBJECT_ATTRIBUTES hProcAttr;
+		CLIENT_ID hProcCid;
+		hProcCid.UniqueProcess = UlongToHandle(process->processId);
+		hProcCid.UniqueThread = 0L;
+		InitializeObjectAttributes(&hProcAttr, nullptr, OBJ_KERNEL_HANDLE, nullptr, nullptr);
+		if (!NT_SUCCESS(status = ZwOpenProcess(&hProc, PROCESS_SUSPEND_RESUME, &hProcAttr, &hProcCid))) {
+			return auxCompleteIrp(Irp, status);
+		}
+		PEPROCESS hEProc = nullptr;
+		if (!NT_SUCCESS(status = ObReferenceObjectByHandle(hProc, PROCESS_SUSPEND_RESUME, *PsProcessType, KernelMode, (PVOID*)&hEProc, nullptr))) {
+			ZwClose(hProc);
+			return auxCompleteIrp(Irp, status);
+		}
+
+		ResumeProcess(hEProc);
+
+
+		ObDereferenceObject(hEProc);
+		ZwClose(hProc);
+	}
 	default:
 		break;
 	}
@@ -127,8 +182,6 @@ NTSTATUS RansMonitorDeviceIoControl(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
 NTSTATUS RansMonitorCreateClose(PDEVICE_OBJECT, PIRP Irp) {
 	return auxCompleteIrp(Irp);
 }
-
-
 
 NTSTATUS RansMonitorRead(PDEVICE_OBJECT , PIRP Irp) {
 
@@ -178,7 +231,8 @@ bool isProcessInLinkedList(ULONG ProcessId) {
 	return false;
 }
 
-void CreateProcessNotifyRoutine(PEPROCESS, HANDLE PID, PPS_CREATE_NOTIFY_INFO CreateInfo) {
+void CreateProcessNotifyRoutine(PEPROCESS PROC, HANDLE PID, PPS_CREATE_NOTIFY_INFO CreateInfo) {
+	UNREFERENCED_PARAMETER(PROC);
 	if (CreateInfo) {
 		PNASTYWARE_MON_PROCESS_NODE procNode = (PNASTYWARE_MON_PROCESS_NODE)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(NASTYWARE_MON_PROCESS_NODE), 'nskm');
 		if (procNode == nullptr) {
@@ -186,11 +240,12 @@ void CreateProcessNotifyRoutine(PEPROCESS, HANDLE PID, PPS_CREATE_NOTIFY_INFO Cr
 			return;
 		}
 		procNode->ProcessId = HandleToULong(PID);
-		PushItem(&procNode->Entry);
-		
+		//PushItem(&procNode->Entry);
+		KdPrint(("Command: %wZ\n", CreateInfo->CommandLine));
+		SuspendProcess(PROC);
+
 	}
 }
-
 
 void Error(const char* message, NTSTATUS status) {
 	KdPrint(("RansMonitor : Error : %s 0x%08x\n", message, status));
@@ -221,3 +276,21 @@ void PushItem(LIST_ENTRY* entry) {
 	g_Globals.Count++;
 	g_Globals.Mutex.Unlock();
 }
+
+void SuspendProcess(PEPROCESS Process) {
+	if (!g_Globals.ProcessAPI)
+		return;
+
+	PsSuspendProcess(Process);
+}
+
+void ResumeProcess(PEPROCESS Process) {
+	if (!g_Globals.ProcessAPI)
+		return;
+
+	PsResumeProcess(Process);
+}
+
+
+
+

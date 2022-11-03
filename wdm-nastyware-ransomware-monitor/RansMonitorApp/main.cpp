@@ -86,6 +86,7 @@ void DoWork(HANDLE hDevice) {
 				DeviceIoControl(hDevice, IOCTL_NASTYWARE_MON_KILL_PROCESS, &tempProcess, sizeof(NASTYWARE_MON_PROCESS), nullptr, 0, nullptr, nullptr);
 			}
 			else {
+				DeviceIoControl(hDevice, IOCTL_NASTYWARE_MON_RESUME_PROCESS, &tempProcess, sizeof(NASTYWARE_MON_PROCESS), nullptr, 0, nullptr, nullptr);
 				std::cout << "File identified as goodware : " << currentProcImagePath << std::endl;
 			}
 		}

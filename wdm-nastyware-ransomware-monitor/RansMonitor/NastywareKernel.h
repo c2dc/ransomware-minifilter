@@ -10,4 +10,5 @@ struct Globals {
 	LIST_ENTRY listHead;
 	FastMutex Mutex;
 	unsigned int Count;
+	bool ProcessAPI;
 };
