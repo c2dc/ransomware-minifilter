@@ -1,7 +1,9 @@
 #include <ntddk.h>
 #include <minwindef.h>
+#include <ntstrsafe.h>
 #include "FunctionEntry.h"
 
+#define YARA_RULES_PATH L"\\??\\C:\\Users\\hacker\\Desktop\\yara_easy.txt"
 #define IMAGE_NUMBEROF_DIRECTORY_ENTRIES      16
 #define IMAGE_DIRECTORY_ENTRY_IMPORT          1
 
@@ -185,13 +187,15 @@ typedef IMAGE_THUNK_DATA64* PIMAGE_THUNK_DATA64;
 
 typedef struct _GLOBALS_ {
 	FAST_MUTEX FastMutex;
+	char* yara_file_data;
+	size_t yara_file_size;
 } GLOBALS, *PGLOBALS;
 
 
 void DriverUnloadRoutine(PDRIVER_OBJECT);
 void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_INFO CreateInfo);
 
-IMPORT_ENTRY ImportList[1024]{ 0 };
+//IMPORT_ENTRY ImportList[1024]{ 0 };
 GLOBALS Globals_g{ 0 };
 
 DWORD Rva2Offset(DWORD rva, PIMAGE_SECTION_HEADER psh, PIMAGE_NT_HEADERS pnt)
@@ -221,21 +225,92 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 	UNREFERENCED_PARAMETER(DriverObject);
 	UNREFERENCED_PARAMETER(RegistryPath);
 
-	NTSTATUS retStatus = STATUS_UNSUCCESSFUL;
+	NTSTATUS retStatus = STATUS_SUCCESS;
 	ExInitializeFastMutex(&Globals_g.FastMutex);
 
-	KdPrint(("WDM Driver: Loaded\n"));
 
 	// Setting unload routine
 	DriverObject->DriverUnload = DriverUnloadRoutine;
 
-	// Set create process notify routine 
-	retStatus = PsSetCreateProcessNotifyRoutineEx(CreateProcessHook, FALSE);
-	if (NT_SUCCESS(retStatus)) {
-		KdPrint(("[WDM Driver Info] : PsSetCreateProcessNotifyRoutineEx Set."));
+	// Open and read yara file
+	HANDLE YaraFileHandle = nullptr;
+	OBJECT_ATTRIBUTES FileObjectAttr;
+	UNICODE_STRING YaraFilePath = RTL_CONSTANT_STRING(YARA_RULES_PATH);
+	IO_STATUS_BLOCK FileStatusBlock{ 0 };
+	IO_STATUS_BLOCK File2StatusBlock{ 0 };
+	IO_STATUS_BLOCK ReadFileStatusBlock{ 0 };
+	FILE_STANDARD_INFORMATION FileInfo{ 0 };
+	ULONGLONG FileSize = 0;
+
+	RtlZeroMemory(&FileObjectAttr, sizeof(OBJECT_ATTRIBUTES));
+	InitializeObjectAttributes(&FileObjectAttr, &YaraFilePath, OBJ_KERNEL_HANDLE, NULL, NULL);
+
+	
+	do {
+		
+		// Try to open a valid handle for the file
+		retStatus = ZwCreateFile(&YaraFileHandle, GENERIC_READ, &FileObjectAttr, &FileStatusBlock, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_VALID_FLAGS, FILE_OPEN, FILE_RANDOM_ACCESS, NULL, 0);
+		if (retStatus != STATUS_SUCCESS || YaraFileHandle == NULL) {
+			KdPrint(("[WDM Driver Error]> Failed opening file handle to YARA file: %wZ Code: %X\n", YaraFilePath, retStatus));
+			break;
+		}
+
+		// Query information about file. This way
+		// we obtain the size of the file
+		retStatus = ZwQueryInformationFile(YaraFileHandle, &File2StatusBlock, &FileInfo, sizeof(FileInfo), FileStandardInformation);
+		if (!NT_SUCCESS(retStatus)) {
+			KdPrint(("[WDM Driver Error]> Failed querying YARA file information\n"));
+			break;
+		}
+
+		// Grab file size
+		FileSize = FileInfo.EndOfFile.QuadPart;
+		Globals_g.yara_file_size = FileSize;
+
+		// File should have DOS HEADER and NT HEADER
+		if (FileSize <= (sizeof(IMAGE_DOS_HEADER) + sizeof(IMAGE_NT_HEADERS64))) {
+			break;
+		}
+
+		// Allocate memory for file content.
+		Globals_g.yara_file_data = (char*)ExAllocatePool2(POOL_FLAG_PAGED, FileSize + 2, 'nskm');
+		if (Globals_g.yara_file_data == NULL) {
+			KdPrint(("[WDM Driver Error]> Failed to allocate memory for YARA file information\n"));
+			break;
+		}
+
+		// Read the first two bytes of the file in order to check if it is a executable
+		LARGE_INTEGER ByteOffset;
+		ByteOffset.QuadPart = 0L;
+		retStatus = ZwReadFile(YaraFileHandle, NULL, NULL, NULL, &ReadFileStatusBlock, Globals_g.yara_file_data, (ULONG)FileSize, &ByteOffset, NULL);
+		if (!NT_SUCCESS(retStatus)) {
+			KdPrint(("[WDM Driver Error]> Failed to read YARA file: %X\n", retStatus));
+			break;
+		}
+
+		ZwClose(YaraFileHandle);
+		YaraFileHandle = nullptr;
+
+		// Set create process notify routine 
+		
+		retStatus = PsSetCreateProcessNotifyRoutineEx(CreateProcessHook, FALSE);
+		if (NT_SUCCESS(retStatus)) {
+			KdPrint(("[WDM Driver Info] : PsSetCreateProcessNotifyRoutineEx Set."));
+		}
+		
+
+	} while (false);
+
+	if (!NT_SUCCESS(retStatus)) {
+		if (Globals_g.yara_file_data)
+			ExFreePool(Globals_g.yara_file_data);
+		if (YaraFileHandle)
+			ZwClose(YaraFileHandle);
+		return retStatus;
 	}
 
 
+	KdPrint(("WDM Driver: Loaded\n"));
 
 	return retStatus;
 }
@@ -243,6 +318,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 
 void DriverUnloadRoutine(PDRIVER_OBJECT) {
 	PsSetCreateProcessNotifyRoutineEx(CreateProcessHook, TRUE);
+	ExFreePool(Globals_g.yara_file_data);
 	KdPrint(("WDM Driver: Unloaded.\n"));
 	return;
 }
@@ -262,6 +338,7 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 		ULONGLONG FileSize = 0;
 		PVOID BaseAddress = NULL;
 
+		RtlZeroMemory(&FileObjectAttr, sizeof(OBJECT_ATTRIBUTES));
 
 		if (CreateInfo->FileOpenNameAvailable == FALSE) {
 			return;
@@ -274,12 +351,11 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 		InitializeObjectAttributes(&FileObjectAttr, &FilePath, OBJ_KERNEL_HANDLE, NULL, NULL);
 		
 		// Try to open a valid handle for the file
-		retStatus = ZwCreateFile(&FileHandle, GENERIC_READ, &FileObjectAttr, &FileStatusBlock, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_VALID_FLAGS, FILE_OPEN, FILE_NON_DIRECTORY_FILE, NULL, 0);
-		if (!NT_SUCCESS(retStatus) || retStatus == INVALID_KERNEL_HANDLE) {
-			KdPrint(("[WDM Driver Error]> Failed opening file handle to file: %wZ Code: %X\n", &FilePath, retStatus));
+		retStatus = ZwCreateFile(&FileHandle, GENERIC_READ, &FileObjectAttr, &FileStatusBlock, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_VALID_FLAGS, FILE_OPEN, FILE_RANDOM_ACCESS, NULL, 0);
+		if (retStatus != STATUS_SUCCESS || FileHandle == NULL) {
+			KdPrint(("[WDM Driver Error]> Failed opening file handle to file: %wZ Code: %X\n", FilePath, retStatus));
 			return;
 		}
-
 
 		// Query information about file. This way
 		// we obtain the size of the file
@@ -307,7 +383,6 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 			return;
 		}
 
-
 		// Read the first two bytes of the file in order to check if it is a executable
 		LARGE_INTEGER ByteOffset;
 		ByteOffset.QuadPart = 0L;
@@ -318,9 +393,6 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 			ExFreePool(BaseAddress);
 			return;
 		}
-
-		// CORRECT?
-
 
 		if (*((PUINT16)(BaseAddress)) == 0x5a4d) {
 
@@ -343,30 +415,63 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 			// Variables used
 			PIMAGE_DOS_HEADER DosHeader = (PIMAGE_DOS_HEADER)BaseAddress;
 			PIMAGE_NT_HEADERS64 NtHeaders = (PIMAGE_NT_HEADERS64)((DWORD_PTR)BaseAddress + DosHeader->e_lfanew);
+			if (NtHeaders == NULL) {
+				KdPrint(("[WDM Driver Error]> Failed accessing ntheaders\n"));
+				ZwClose(FileHandle);
+				ExFreePool(BaseAddress);
+				return;
+			}
+
 			PIMAGE_SECTION_HEADER pSech = (PIMAGE_SECTION_HEADER)IMAGE_FIRST_SECTION(NtHeaders);
+			if (pSech == NULL) {
+				KdPrint(("[WDM Driver Error]> Failed accessing ntheaders\n"));
+				ZwClose(FileHandle);
+				ExFreePool(BaseAddress);
+				return;
+			}
+
 			PIMAGE_IMPORT_DESCRIPTOR ImportDescriptor = NULL;
 			DWORD thunk = 0;
 			PIMAGE_THUNK_DATA64 thunkData = NULL;
 			LPCSTR libName = NULL;
 			LPCSTR funcName = NULL;
-
-			
+			PIMPORT_ENTRY ImportList = nullptr;
 
 
 			// Check if the executable is 64 bit
 			// If this magic number is zero, then probably something wrong happened
 			// TODO: 32 bit version support
-
-
+			
+			ImportList = (PIMPORT_ENTRY)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(IMPORT_ENTRY)*1024, 'nskm');
+			if (ImportList == nullptr) {
+				ZwClose(FileHandle);
+				ExFreePool(BaseAddress);
+				return;
+			}
 			if (NtHeaders->OptionalHeader.Magic == 0x20b) {
 				// Lock the list with the mutex
-				ExAcquireFastMutex(&Globals_g.FastMutex);
+				//ExAcquireFastMutex(&Globals_g.FastMutex);
+				
 
-
+				if (&(NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT]) == NULL) {
+					KdPrint(("[WDM Driver Error]> Image directory entry import not found\n"));
+					//ExReleaseFastMutex(&Globals_g.FastMutex);
+					ZwClose(FileHandle);
+					ExFreePool(BaseAddress);
+					ExFreePool(ImportList);
+					return;
+				}
 
 				IMAGE_DATA_DIRECTORY importsDirectory = NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
 				ImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)(Rva2Offset(importsDirectory.VirtualAddress, pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
-
+				if (ImportDescriptor == NULL) {
+					//ExReleaseFastMutex(&Globals_g.FastMutex);
+					KdPrint(("[WDM Driver Error]> Import Descriptor not found\n"));
+					ZwClose(FileHandle);
+					ExFreePool(BaseAddress);
+					ExFreePool(ImportList);
+					return;
+				}
 
 				KdPrint(("Process Information: \nID:%i\nImage File Name: %wZ\nCommand Line: %wZ\nFile Size: %d\nFirst 2 bytes: %x\nNt Header Magic: %X\nImport Descriptor Name: %x\n\n",
 					HandleToULong(ProcessId), CreateInfo->ImageFileName, CreateInfo->CommandLine, (ULONG)FileSize, DosHeader->e_magic, NtHeaders->OptionalHeader.Magic, ImportDescriptor->Name));
@@ -394,19 +499,23 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 					thunk = ImportDescriptor->OriginalFirstThunk == 0 ? ImportDescriptor->FirstThunk : ImportDescriptor->OriginalFirstThunk;
 					thunkData = (PIMAGE_THUNK_DATA64)(Rva2Offset(thunk, pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
 
+					if (thunkData == nullptr) {
+						break;
+					}
 					
-					for (int i = 0; thunkData->u1.AddressOfData != 0; i++) {
+					for (int i = 0; thunkData->u1.AddressOfData != 0 && i < 1024; i++) {
 						if ((Rva2Offset((DWORD)(thunkData->u1.AddressOfData + 2), pSech, NtHeaders) + (DWORD_PTR)BaseAddress) < ((DWORD_PTR)BaseAddress + FileSize) &&
 							(Rva2Offset((DWORD)(thunkData->u1.AddressOfData + 2), pSech, NtHeaders)) >= (((DWORD_PTR)BaseAddress + FileSize))) {
 							break;
 						}
 						funcName = (LPCSTR)(Rva2Offset((DWORD)(thunkData->u1.AddressOfData + 2), pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
-						//KdPrint(("\t\tFunction name: %s\n", funcName));
 
 						// Adding to the list
-						if (strlen(funcName) > 1 && strlen(libName) > 1) {
-							strncpy(ImportList[i].dll_name, libName, 127);
-							strncpy(ImportList[i].function_name, funcName, 127);
+						if (funcName != nullptr) {
+							if (strlen(funcName) > 1 && strlen(libName) > 1) {
+								strncpy_s(ImportList[i].dll_name, 128, libName, strlen(libName));
+								strncpy_s(ImportList[i].function_name, 128, funcName, strlen(funcName));
+							}
 						}
 
 						thunkData++;
@@ -425,9 +534,11 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 
 
 
-				memset(ImportList, 0, sizeof(ImportList));
-				ExReleaseFastMutex(&Globals_g.FastMutex);
-			}		
+				memset(ImportList, 0, sizeof(IMPORT_ENTRY)*1024);
+				
+				//ExReleaseFastMutex(&Globals_g.FastMutex);
+			}
+			ExFreePool(ImportList);
 			
 		}	
 
