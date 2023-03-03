@@ -325,6 +325,7 @@ void DriverUnloadRoutine(PDRIVER_OBJECT) {
 
 void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_INFO CreateInfo){
 	UNREFERENCED_PARAMETER(EProcess);
+	UNREFERENCED_PARAMETER(ProcessId);
 	if (CreateInfo) {
 
 		UNICODE_STRING FilePath{ 0 };
@@ -346,6 +347,7 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 
 		RtlInitUnicodeString(&FilePath, CreateInfo->ImageFileName->Buffer);
 		
+		KdPrint(("PPID: %d\n", CreateInfo->ParentProcessId));
 		KdPrint(("File Name: %wZ\n", FilePath));
 
 		InitializeObjectAttributes(&FileObjectAttr, &FilePath, OBJ_KERNEL_HANDLE, NULL, NULL);
@@ -449,13 +451,10 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 				return;
 			}
 			if (NtHeaders->OptionalHeader.Magic == 0x20b) {
-				// Lock the list with the mutex
-				//ExAcquireFastMutex(&Globals_g.FastMutex);
 				
 
 				if (&(NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT]) == NULL) {
 					KdPrint(("[WDM Driver Error]> Image directory entry import not found\n"));
-					//ExReleaseFastMutex(&Globals_g.FastMutex);
 					ZwClose(FileHandle);
 					ExFreePool(BaseAddress);
 					ExFreePool(ImportList);
@@ -465,17 +464,12 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 				IMAGE_DATA_DIRECTORY importsDirectory = NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
 				ImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)(Rva2Offset(importsDirectory.VirtualAddress, pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
 				if (ImportDescriptor == NULL) {
-					//ExReleaseFastMutex(&Globals_g.FastMutex);
 					KdPrint(("[WDM Driver Error]> Import Descriptor not found\n"));
 					ZwClose(FileHandle);
 					ExFreePool(BaseAddress);
 					ExFreePool(ImportList);
 					return;
 				}
-
-				KdPrint(("Process Information: \nID:%i\nImage File Name: %wZ\nCommand Line: %wZ\nFile Size: %d\nFirst 2 bytes: %x\nNt Header Magic: %X\nImport Descriptor Name: %x\n\n",
-					HandleToULong(ProcessId), CreateInfo->ImageFileName, CreateInfo->CommandLine, (ULONG)FileSize, DosHeader->e_magic, NtHeaders->OptionalHeader.Magic, ImportDescriptor->Name));
-
 
 				while (ImportDescriptor->Name != NULL) {
 
@@ -488,7 +482,6 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 					
 					// Grabbing dll name
 					libName = (LPCSTR)(Rva2Offset(ImportDescriptor->Name, pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
-					KdPrint(("DLL Name: %s\n", libName));
 
 					if ((Rva2Offset(thunk, pSech, NtHeaders) + (DWORD_PTR)BaseAddress) < ((DWORD_PTR)BaseAddress + FileSize) &&
 						(Rva2Offset(thunk, pSech, NtHeaders)) >= (((DWORD_PTR)BaseAddress + FileSize))) {
@@ -525,18 +518,15 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 					ImportDescriptor++;
 				}
 				
-				// Print the whole list
-				for (int i = 0; i < 1024 && strlen(ImportList[i].dll_name) > 0 && strlen(ImportList[i].function_name) > 0; i++) {
-					KdPrint(("Dll name: %s\tFunction Name:%s\tEntry: %d\n", ImportList[i].dll_name, ImportList[i].function_name, i));
-				}
 
 				// Here we will open the imports file and compare the imports
-
-
+				bool ret = process_rules(Globals_g.yara_file_data, Globals_g.yara_file_size, (const PIMPORT_ENTRY)ImportList);
+				if (ret) {
+					KdPrint(("[+] Possible malware: %wZ\n", FilePath));
+				}
 
 				memset(ImportList, 0, sizeof(IMPORT_ENTRY)*1024);
 				
-				//ExReleaseFastMutex(&Globals_g.FastMutex);
 			}
 			ExFreePool(ImportList);
 			

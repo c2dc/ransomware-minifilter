@@ -77,7 +77,7 @@ bool boolean_expression_evaluator(char* file_data) {
 	return false;
 }
 
-char* process(char* file_data) {
+char* process(char* file_data, const PIMPORT_ENTRY ImportList) {
 
 
 	// Process the file
@@ -135,11 +135,24 @@ char* process(char* file_data) {
 
 	char imp_entry[300]{ 0 };
 	for (size_t i = 0; i < count; i++) {
-		// bool exists = CHECK_IF_IMPORT_EXISTS_ON_FILE()
+
+		// Imports validation
+		bool exists = false;
+		for (size_t j = 0; j < 1024 && strlen(ImportList[i].dll_name) > 0 && strlen(ImportList[i].function_name) > 0;j++) {
+			if (!strncmp(imports[i].dll_name, ImportList[i].dll_name, strlen(ImportList[i].dll_name)) &&
+				!strncmp(imports[i].function_name, ImportList[i].function_name, strlen(ImportList[i].function_name))) {
+				exists = true;
+			}
+		}
+
 		sprintf_s(imp_entry, "pe.imports(%s, %s)", imports[i].dll_name, imports[i].function_name);
 
-		file_data = replace(file_data, imp_entry, "false");
+		if (exists)
+			file_data = replace(file_data, imp_entry, "true");
+		else
+			file_data = replace(file_data, imp_entry, "false");
 		memset(imp_entry, 0, 300);
+		exists = false;
 	}
 
 	// Free memory
@@ -150,7 +163,7 @@ char* process(char* file_data) {
 }
 
 
-bool process_rules(const char* data, size_t file_size) {
+bool process_rules(const char* data, size_t file_size, const PIMPORT_ENTRY ImportList) {
 
 	char* file_data = (char*)ExAllocatePool2(POOL_FLAG_PAGED, file_size*sizeof(char) + 1, 'nskm');
 	if (file_data == nullptr) {
@@ -202,16 +215,18 @@ bool process_rules(const char* data, size_t file_size) {
 		strncpy_s(condition_section, condition_section_length + 1,temp, condition_section_length);
 
 		// Evaluate
-		condition_section = process(condition_section);
+		condition_section = process(condition_section, ImportList);
 		if (condition_section == nullptr) {
 			ExFreePool(file_data);
 			return false;
 		}
 
 		bool result = boolean_expression_evaluator(condition_section);
-		if (result)
+		KdPrint(("[ RESULT ]: %d\n", result));
+		if (result) {
+			ExFreePool(file_data);
 			return true;
-
+		}
 		// Next rule
 		start = strstr(temp, "drvnskm_rule");
 		memset(rule_name, 0, 32);
