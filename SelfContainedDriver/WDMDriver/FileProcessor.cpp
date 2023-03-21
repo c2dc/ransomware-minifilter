@@ -43,6 +43,8 @@ char* replace(char* string, const char* substring, const char* replace) {
 }
 
 bool boolean_expression_evaluator(char* file_data) {
+	if (file_data == nullptr)
+		return false;
 
 	char expressions[20][20] = { "not(true)", "not(false)", "(true)", "(false)",
 								"(true and false)", "(true and true)", "(false and true)", "(false and false)",
@@ -74,10 +76,11 @@ bool boolean_expression_evaluator(char* file_data) {
 		return false;
 	}
 
+	ExFreePool(file_data);
 	return false;
 }
 
-char* process(char* file_data, const PIMPORT_ENTRY ImportList) {
+char* process(char* file_data, PIMPORT_ENTRY ImportList) {
 
 
 	// Process the file
@@ -101,6 +104,7 @@ char* process(char* file_data, const PIMPORT_ENTRY ImportList) {
 	// Allocate memory
 	PIMPORT_ENTRY imports = (PIMPORT_ENTRY)ExAllocatePool2(POOL_FLAG_PAGED, sizeof(IMPORT_ENTRY)*count, 'nskm');
 	if (imports == nullptr) {
+		ExFreePool(file_data);
 		return nullptr;
 	}
 
@@ -126,6 +130,7 @@ char* process(char* file_data, const PIMPORT_ENTRY ImportList) {
 		}
 		else {
 			ExFreePool(imports);
+			ExFreePool(file_data);
 			return nullptr;
 		}
 
@@ -134,10 +139,11 @@ char* process(char* file_data, const PIMPORT_ENTRY ImportList) {
 
 
 	char imp_entry[300]{ 0 };
+	bool exists = false;
 	for (size_t i = 0; i < count; i++) {
 
 		// Imports validation
-		bool exists = false;
+		exists = false;
 		for (size_t j = 0; j < 1024 && strlen(ImportList[i].dll_name) > 0 && strlen(ImportList[i].function_name) > 0;j++) {
 			if (!strncmp(imports[i].dll_name, ImportList[i].dll_name, strlen(ImportList[i].dll_name)) &&
 				!strncmp(imports[i].function_name, ImportList[i].function_name, strlen(ImportList[i].function_name))) {
@@ -152,7 +158,6 @@ char* process(char* file_data, const PIMPORT_ENTRY ImportList) {
 		else
 			file_data = replace(file_data, imp_entry, "false");
 		memset(imp_entry, 0, 300);
-		exists = false;
 	}
 
 	// Free memory
@@ -163,14 +168,16 @@ char* process(char* file_data, const PIMPORT_ENTRY ImportList) {
 }
 
 
-bool process_rules(const char* data, size_t file_size, const PIMPORT_ENTRY ImportList) {
-
+bool process_rules(char* data, size_t file_size, PIMPORT_ENTRY ImportList) {
+	UNREFERENCED_PARAMETER(ImportList);
+	//KdPrint(("[info] process_rules function reached\n"));
 	char* file_data = (char*)ExAllocatePool2(POOL_FLAG_PAGED, file_size*sizeof(char) + 1, 'nskm');
 	if (file_data == nullptr) {
 		return false;
 	}
+	//KdPrint(("[info] Memory allocated for copy of yara_easy.txt\n"));
 
-	RtlZeroMemory(file_data, file_size + 1);
+	RtlZeroMemory(file_data, file_size*sizeof(char) + 1);
 	memcpy_s(file_data, file_size + 1, data, file_size);
 
 
@@ -187,14 +194,16 @@ bool process_rules(const char* data, size_t file_size, const PIMPORT_ENTRY Impor
 			break;
 		temp += 12;
 	}
-
+	
 	temp = file_data;
+	
 	char rule_name[32]{ 0 };
 	char* condition_section = nullptr;
 	size_t condition_section_length = 0;
 	size_t rule_name_length = 0;
+	bool result = false;
 
-	KdPrint(("Process rules: Reading rules\n"));
+	//KdPrint(("Process rules: Reading rules\n"));
 	for (size_t i = 0; i < count_rules; i++) {
 		// Process rules
 
@@ -203,26 +212,31 @@ bool process_rules(const char* data, size_t file_size, const PIMPORT_ENTRY Impor
 		for (rule_name_length = 0; temp[rule_name_length] != '{' && rule_name_length < 32; rule_name_length++);
 		strncpy_s(rule_name, 32, temp, rule_name_length);
 
-		KdPrint(("Processing rule (%s)\n", rule_name));
+		//KdPrint(("Processing rule (%s)\n", rule_name));
 		// Condition section
 		temp += rule_name_length + CONDITION_TOKEN_LENGTH + 1;
 		for (condition_section_length = 0; temp[condition_section_length] != '}'; condition_section_length++);;
 
 		// Memmory allocation
-		//condition_section = new char[condition_section_length + 1];
 		condition_section = (char*)ExAllocatePool2(POOL_FLAG_PAGED, condition_section_length + 1, 'nskm');
+		if (condition_section == nullptr) {
+			//ExFreePool(file_data);
+			break;
+		}
+
 		memset(condition_section, 0, condition_section_length + 1);
 		strncpy_s(condition_section, condition_section_length + 1,temp, condition_section_length);
 
 		// Evaluate
+		
 		condition_section = process(condition_section, ImportList);
 		if (condition_section == nullptr) {
 			ExFreePool(file_data);
 			return false;
 		}
 
-		bool result = boolean_expression_evaluator(condition_section);
-		KdPrint(("[ RESULT ]: %d\n", result));
+		result = boolean_expression_evaluator(condition_section);
+		//KdPrint(("[ RESULT ]: %d\n", result));
 		if (result) {
 			ExFreePool(file_data);
 			return true;

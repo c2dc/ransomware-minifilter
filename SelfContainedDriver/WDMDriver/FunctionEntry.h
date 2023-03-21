@@ -8,4 +8,4 @@ typedef struct _IMPORT_ENTRY_{
 } IMPORT_ENTRY, *PIMPORT_ENTRY;
 
 
-bool process_rules(const char* file_data, size_t file_size, const PIMPORT_ENTRY);
+bool process_rules(char* file_data, size_t file_size, PIMPORT_ENTRY);
