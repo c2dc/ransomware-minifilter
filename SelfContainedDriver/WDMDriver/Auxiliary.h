@@ -184,6 +184,17 @@ typedef struct _IMAGE_THUNK_DATA64 {
 } IMAGE_THUNK_DATA64;
 typedef IMAGE_THUNK_DATA64* PIMAGE_THUNK_DATA64;
 
+typedef struct _IMAGE_THUNK_DATA32 {
+	union {
+		DWORD ForwarderString;      // PBYTE 
+		DWORD Function;             // PDWORD
+		DWORD Ordinal;
+		DWORD AddressOfData;        // PIMAGE_IMPORT_BY_NAME
+	} u1;
+} IMAGE_THUNK_DATA32;
+typedef IMAGE_THUNK_DATA32* PIMAGE_THUNK_DATA32;
+
+
 typedef struct _GLOBALS_ {
 	char* yara_file_data;
 	size_t yara_file_size;
@@ -212,11 +223,15 @@ private:
 	bool check_image_directory_entry();
 	bool set_imports_directory();
 	bool set_import_descriptor();
-	bool get_function_import_list();
+	bool get_function_import_list64();
+	bool get_function_import_list32();
 	bool check_rva_address_available(const DWORD rva_address);
 	DWORD rva_2_offset(DWORD, PIMAGE_SECTION_HEADER, void*);
 
+	bool prepare();
+
 
 public:
-	PEParser(const int type, const PIMAGE_DOS_HEADER dosHeader, void * BaseAddress, ULONGLONG FileSize, PIMPORT_ENTRY ImportList);
+	PEParser(const DWORD type, const PIMAGE_DOS_HEADER dosHeader, void * BaseAddress, ULONGLONG FileSize, PIMPORT_ENTRY ImportList);
+	const void display_import_list();
 };

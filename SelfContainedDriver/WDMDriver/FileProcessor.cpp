@@ -56,7 +56,7 @@ bool boolean_expression_evaluator(char* file_data) {
 									   "(true)", "(true)", "(true)", "(false)",
 									   "false", "true", "false", "false",
 									   "true", "true", "true", "false" };
-	while (strncmp(file_data, "true", 4) && strncmp(file_data, "false", 5)) {
+	while (strlen(file_data) > 5) {
 		for (int i = 0; i < 20; i++) {
 			while (strstr(file_data, expressions[i]) != nullptr) {
 				file_data = replace(file_data, expressions[i], expressions_output[i]);
@@ -145,12 +145,29 @@ char* process(char* file_data, PIMPORT_ENTRY ImportList) {
 		// Imports validation
 		exists = false;
 		for (size_t j = 0; j < 1024 && strlen(ImportList[i].dll_name) > 0 && strlen(ImportList[i].function_name) > 0;j++) {
-			if (!strncmp(imports[i].dll_name, ImportList[i].dll_name, strlen(ImportList[i].dll_name)) &&
-				!strncmp(imports[i].function_name, ImportList[i].function_name, strlen(ImportList[i].function_name))) {
-				exists = true;
-			}
-		}
 
+			
+			ANSI_STRING dll_name1;
+			ANSI_STRING dll_name2;
+
+			ANSI_STRING function_name1;
+			ANSI_STRING function_name2;
+
+			RtlInitAnsiString(&dll_name1, imports[i].dll_name);
+			RtlInitAnsiString(&dll_name2, ImportList[j].dll_name);
+			RtlInitAnsiString(&function_name1, imports[i].function_name);
+			RtlInitAnsiString(&function_name2, ImportList[j].function_name);
+			
+			
+			if (!RtlCompareString(&dll_name1, &dll_name2, TRUE) &&
+				!RtlCompareString(&function_name1, &function_name2, TRUE)) {
+
+				exists = true;
+				break;
+			}
+
+		}
+		
 		sprintf_s(imp_entry, "pe.imports(%s, %s)", imports[i].dll_name, imports[i].function_name);
 
 		if (exists)

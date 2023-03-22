@@ -155,11 +155,13 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="FileProcessor.cpp" />
+    <ClCompile Include="FileWrapper.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="parser.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Auxiliary.h" />
+    <ClInclude Include="FileWrapper.h" />
     <ClInclude Include="FunctionEntry.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

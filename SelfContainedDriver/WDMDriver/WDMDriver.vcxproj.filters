@@ -28,12 +28,18 @@
     <ClCompile Include="parser.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="FileWrapper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FunctionEntry.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Auxiliary.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="FileWrapper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

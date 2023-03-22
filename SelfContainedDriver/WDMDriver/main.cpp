@@ -3,6 +3,7 @@
 #include <ntstrsafe.h>
 #include "Auxiliary.h"
 #include "FunctionEntry.h"
+#include "FileWrapper.h"
 
 #define YARA_RULES_PATH L"\\??\\C:\\Users\\hacker\\Desktop\\yara_easy.txt"
 
@@ -24,22 +25,23 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 	DriverObject->DriverUnload = DriverUnloadRoutine;
 
 	// Open and read yara file
-	HANDLE YaraFileHandle = nullptr;
-	OBJECT_ATTRIBUTES FileObjectAttr;
-	UNICODE_STRING YaraFilePath = RTL_CONSTANT_STRING(YARA_RULES_PATH);
-	IO_STATUS_BLOCK FileStatusBlock{ 0 };
-	IO_STATUS_BLOCK File2StatusBlock{ 0 };
-	IO_STATUS_BLOCK ReadFileStatusBlock{ 0 };
-	FILE_STANDARD_INFORMATION FileInfo{ 0 };
-	ULONGLONG FileSize = 0;
+	//HANDLE YaraFileHandle = nullptr;
+	//OBJECT_ATTRIBUTES FileObjectAttr;
+	//UNICODE_STRING YaraFilePath = RTL_CONSTANT_STRING(YARA_RULES_PATH);
+	//IO_STATUS_BLOCK FileStatusBlock{ 0 };
+	//IO_STATUS_BLOCK File2StatusBlock{ 0 };
+	//IO_STATUS_BLOCK ReadFileStatusBlock{ 0 };
+	//FILE_STANDARD_INFORMATION FileInfo{ 0 };
+	//ULONGLONG FileSize = 0;
 
-	RtlZeroMemory(&FileObjectAttr, sizeof(OBJECT_ATTRIBUTES));
-	InitializeObjectAttributes(&FileObjectAttr, &YaraFilePath, OBJ_KERNEL_HANDLE, NULL, NULL);
+	//RtlZeroMemory(&FileObjectAttr, sizeof(OBJECT_ATTRIBUTES));
+	//InitializeObjectAttributes(&FileObjectAttr, &YaraFilePath, OBJ_KERNEL_HANDLE, NULL, NULL);
 
 
 	do {
 
 		// Try to open a valid handle for the file
+		/*
 		retStatus = ZwCreateFile(&YaraFileHandle, GENERIC_READ, &FileObjectAttr, &FileStatusBlock, NULL, FILE_ATTRIBUTE_NORMAL, 0, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
 		if (!NT_SUCCESS(retStatus)) {
 			KdPrint(("[WDM Driver Error]> Failed opening file handle to YARA file: %wZ Code: %X\n", YaraFilePath, retStatus));
@@ -83,6 +85,19 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 		Globals_g.yara_file_data[FileSize] = '\0';
 		ZwClose(YaraFileHandle);
 		YaraFileHandle = nullptr;
+		*/
+
+		FileWrapper YaraFileObject(YARA_RULES_PATH);
+		Globals_g.yara_file_size = YaraFileObject.getFileSize();
+		Globals_g.yara_file_data = (char*)ExAllocatePool2(POOL_FLAG_PAGED, YaraFileObject.getFileSize() + 2, 'nskm');
+		if (Globals_g.yara_file_data == nullptr) {
+			KdPrint(("[WDM Driver Error]> Failed to allocate memory for YARA file information\n"));
+			break;
+		}
+
+		YaraFileObject.ReadFileToBuffer(Globals_g.yara_file_data, (ULONG)(YaraFileObject.getFileSize() + 2));
+
+
 
 		// Set create process notify routine 
 		retStatus = PsSetCreateProcessNotifyRoutineEx(CreateProcessHook, FALSE);
@@ -95,8 +110,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 	if (!NT_SUCCESS(retStatus)) {
 		if (Globals_g.yara_file_data)
 			ExFreePool(Globals_g.yara_file_data);
-		if (YaraFileHandle)
-			ZwClose(YaraFileHandle);
 		return retStatus;
 	}
 
@@ -231,11 +244,11 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 				return;
 			}
 
-			PIMAGE_IMPORT_DESCRIPTOR ImportDescriptor = NULL;
-			DWORD thunk = 0;
-			PIMAGE_THUNK_DATA64 thunkData = NULL;
-			LPCSTR libName = NULL;
-			LPCSTR funcName = NULL;
+			//PIMAGE_IMPORT_DESCRIPTOR ImportDescriptor = NULL;
+			//DWORD thunk = 0;
+			//PIMAGE_THUNK_DATA64 thunkData = NULL;
+			//LPCSTR libName = NULL;
+			//LPCSTR funcName = NULL;
 			
 			PIMPORT_ENTRY ImportList = nullptr;
 			
@@ -252,87 +265,16 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 				return;
 			}
 
-			if (NtHeaders->OptionalHeader.Magic == 0x20b) {
-				if (&(NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT]) == NULL) {
-					KdPrint(("[WDM Driver Error]> Image directory entry import not found\n"));
-					ZwClose(FileHandle);
-					ExFreePool(BaseAddress);
-					ExFreePool(ImportList);
-					return;
-				}
-
-				IMAGE_DATA_DIRECTORY importsDirectory = NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-				ImportDescriptor = (PIMAGE_IMPORT_DESCRIPTOR)(Rva2Offset(importsDirectory.VirtualAddress, pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
-				if (ImportDescriptor == NULL) {
-					KdPrint(("[WDM Driver Error]> Import Descriptor not found\n"));
-					ZwClose(FileHandle);
-					ExFreePool(BaseAddress);
-					ExFreePool(ImportList);
-					return;
-				}
-
-				while (ImportDescriptor->Name != NULL) {
-
-
-					// Check if the address is accessible
-					if ((Rva2Offset(ImportDescriptor->Name, pSech, NtHeaders) + (DWORD_PTR)BaseAddress) < ((DWORD_PTR)BaseAddress + FileSize) &&
-						(Rva2Offset(ImportDescriptor->Name, pSech, NtHeaders)) >= (((DWORD_PTR)BaseAddress + FileSize))) {
-						break;
-					}
-
-					// Grabbing dll name
-					libName = (LPCSTR)(Rva2Offset(ImportDescriptor->Name, pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
-
-					if ((Rva2Offset(thunk, pSech, NtHeaders) + (DWORD_PTR)BaseAddress) < ((DWORD_PTR)BaseAddress + FileSize) &&
-						(Rva2Offset(thunk, pSech, NtHeaders)) >= (((DWORD_PTR)BaseAddress + FileSize))) {
-						break;
-					}
-
-					// Listing functions fo the dll
-					thunk = ImportDescriptor->OriginalFirstThunk == 0 ? ImportDescriptor->FirstThunk : ImportDescriptor->OriginalFirstThunk;
-					thunkData = (PIMAGE_THUNK_DATA64)(Rva2Offset(thunk, pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
-
-					if (thunkData == nullptr) {
-						break;
-					}
-
-					for (int i = 0; thunkData->u1.AddressOfData != 0 && i < 1024; i++) {
-						if ((Rva2Offset((DWORD)(thunkData->u1.AddressOfData + 2), pSech, NtHeaders) + (DWORD_PTR)BaseAddress) < ((DWORD_PTR)BaseAddress + FileSize) &&
-							(Rva2Offset((DWORD)(thunkData->u1.AddressOfData + 2), pSech, NtHeaders)) >= (((DWORD_PTR)BaseAddress + FileSize))) {
-							break;
-						}
-						funcName = (LPCSTR)(Rva2Offset((DWORD)(thunkData->u1.AddressOfData + 2), pSech, NtHeaders) + (DWORD_PTR)BaseAddress);
-
-						// Adding to the list
-						if (funcName != nullptr) {
-							if (strlen(funcName) > 1 && strlen(libName) > 1) {
-								strncpy_s(ImportList[i].dll_name, 128, libName, strlen(libName));
-								strncpy_s(ImportList[i].function_name, 128, funcName, strlen(funcName));
-							}
-						}
-
-						thunkData++;
-					}
-
-
-					ImportDescriptor++;
-				}
-
-
-				// Here we will open the imports file and compare the imports
-				KdPrint(("[+] Checking the imports against the rules\n"));
-				bool ret = process_rules(Globals_g.yara_file_data, Globals_g.yara_file_size, ImportList);
-				if (ret) {
-					KdPrint(("[+] Possible malware: %wZ\n", FilePath));
-				}
-
-				memset(ImportList, 0, sizeof(IMPORT_ENTRY) * 1024);
-
-			}
 			
 
+			PEParser PeInfo(NtHeaders->OptionalHeader.Magic, DosHeader, BaseAddress, FileSize, ImportList);
+			
 
-
+			KdPrint(("[+] Checking the imports against the rules\n"));
+			bool ret = process_rules(Globals_g.yara_file_data, Globals_g.yara_file_size, ImportList);
+			if (ret) {
+				KdPrint(("[+] Possible malware: %wZ\n", FilePath));
+			}
 
 			ExFreePool(ImportList);
 
