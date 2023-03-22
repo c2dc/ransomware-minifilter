@@ -186,12 +186,16 @@ char* process(char* file_data, PIMPORT_ENTRY ImportList) {
 
 
 bool process_rules(char* data, size_t file_size, PIMPORT_ENTRY ImportList) {
-	UNREFERENCED_PARAMETER(ImportList);
+
 	//KdPrint(("[info] process_rules function reached\n"));
+	if (ImportList == nullptr)
+		return false;
+
 	char* file_data = (char*)ExAllocatePool2(POOL_FLAG_PAGED, file_size*sizeof(char) + 1, 'nskm');
 	if (file_data == nullptr) {
 		return false;
 	}
+
 	//KdPrint(("[info] Memory allocated for copy of yara_easy.txt\n"));
 
 	RtlZeroMemory(file_data, file_size*sizeof(char) + 1);

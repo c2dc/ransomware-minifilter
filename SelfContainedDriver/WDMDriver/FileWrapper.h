@@ -13,5 +13,6 @@ public:
 	~FileWrapper();
 	ULONGLONG getFileSize() const { return this->fileSize; };
 	bool ReadFileToBuffer(void* destinationBuffer, ULONG destinationBufferSize);
+	void* ReadFile();
 
 };

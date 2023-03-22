@@ -20,9 +20,6 @@ FileWrapper::FileWrapper(const wchar_t * filePath) {
 	this->fileHandle = nullptr;
 	this->fileSize = 0;
 
-	
-
-
 	// Initialize fileObjectAttributes
 	OBJECT_ATTRIBUTES fileObjectAttributes;
 	RtlZeroMemory(&fileObjectAttributes, sizeof(OBJECT_ATTRIBUTES));
@@ -37,7 +34,7 @@ FileWrapper::FileWrapper(const wchar_t * filePath) {
 	RtlZeroMemory(&FileStandardInformationData, sizeof(FILE_STANDARD_INFORMATION));
 	
 	NTSTATUS retStatus = ZwCreateFile(&this->fileHandle, GENERIC_READ, &fileObjectAttributes, &fileStatusBlock, NULL,
-									  FILE_ATTRIBUTE_NORMAL, 0, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+									  FILE_ATTRIBUTE_NORMAL, FILE_SHARE_VALID_FLAGS, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
 
 	if (!NT_SUCCESS(retStatus)) {
 		KdPrint(("[NASTYWARE WDM DRIVER]> Failed opening file handle: %wZ Code: %X\n", this->filePath, retStatus));
@@ -98,4 +95,41 @@ bool FileWrapper::ReadFileToBuffer(void* destinationBuffer, ULONG destinationBuf
 	return true;
 
 
+}
+
+void* FileWrapper::ReadFile() {
+
+	if (this->fileHandle == nullptr) {
+		KdPrint(("[NASTYWARE WDM DRIVER]> Failed reading file. File handle is null\n"));
+		return false;
+	}
+
+	if (this->fileSize == 0) {
+		KdPrint(("[NASTYWARE WDM DRIVER]> Failed reading file. File size is zero\n"));
+		return false;
+	}
+
+	LARGE_INTEGER byteOffset;
+	IO_STATUS_BLOCK readFileStatusBlock;
+	void* destinationBuffer = ExAllocatePool2(POOL_FLAG_PAGED, this->getFileSize() + 2, 'nskm');
+	if (destinationBuffer == nullptr) {
+		KdPrint(("[NASTYWARE WDM DRIVER]> Could not allocate buffer\n"));
+		return nullptr;
+	}
+
+	byteOffset.LowPart = byteOffset.HighPart = 0;
+	RtlZeroMemory(&readFileStatusBlock, sizeof(IO_STATUS_BLOCK));
+
+	NTSTATUS retStatus = ZwReadFile(this->fileHandle, NULL, NULL, NULL, &readFileStatusBlock,
+		destinationBuffer, (ULONG)this->getFileSize(), &byteOffset, NULL);
+
+	if (!NT_SUCCESS(retStatus)) {
+		KdPrint(("[NASTYWARE WDM DRIVER]> Could not read file: %X\n", retStatus));
+		return nullptr;
+	}
+
+	char* cdestinationBuffer = (char*)destinationBuffer;
+	cdestinationBuffer[this->getFileSize() + 1] = '\0';
+
+	return destinationBuffer;
 }

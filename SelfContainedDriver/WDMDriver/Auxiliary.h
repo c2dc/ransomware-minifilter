@@ -215,10 +215,12 @@ private:
 	IMAGE_DATA_DIRECTORY importsDirectory;
 	PIMAGE_IMPORT_DESCRIPTOR importDescriptor;
 	PIMPORT_ENTRY ImportList;
+	size_t ImportListSize;
 	void* BaseAddress;
 	ULONGLONG FileSize;
 	bool is32bit;
 	bool is64bit;
+	UNICODE_STRING filePath;
 
 	bool check_image_directory_entry();
 	bool set_imports_directory();
@@ -229,9 +231,15 @@ private:
 	DWORD rva_2_offset(DWORD, PIMAGE_SECTION_HEADER, void*);
 
 	bool prepare();
-
+	void cleanup();
 
 public:
 	PEParser(const DWORD type, const PIMAGE_DOS_HEADER dosHeader, void * BaseAddress, ULONGLONG FileSize, PIMPORT_ENTRY ImportList);
+	PEParser(const PCUNICODE_STRING filePath);
+	~PEParser();
+	bool ispe() const;
 	const void display_import_list();
+	PIMPORT_ENTRY get_import_list() const;
+	UNICODE_STRING get_file_path() const;
+	
 };

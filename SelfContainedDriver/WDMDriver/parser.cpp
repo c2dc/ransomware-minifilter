@@ -1,3 +1,4 @@
+#include "FileWrapper.h"
 #include "Auxiliary.h"
 
 PEParser::PEParser(const DWORD type, const PIMAGE_DOS_HEADER DosHeader, void * BaseAddress, ULONGLONG FileSize, PIMPORT_ENTRY ImportList) {
@@ -33,6 +34,112 @@ PEParser::PEParser(const DWORD type, const PIMAGE_DOS_HEADER DosHeader, void * B
 	this->prepare();
 
 	
+}
+
+PEParser::PEParser(const PCUNICODE_STRING filePath) {
+
+	this->BaseAddress = nullptr;;
+	this->is32bit = false;
+	this->is64bit = false;
+	this->ImportListSize = 1024 * sizeof(IMPORT_ENTRY);
+	this->ImportList = nullptr;
+	this->FileSize = 0;
+	this->DosHeader = nullptr;
+	this->NtHeaders64 = nullptr;
+	this->pSech64 = nullptr;
+	this->NtHeaders32 = nullptr;
+	this->pSech32 = nullptr;
+	this->importDescriptor = nullptr;
+	this->importsDirectory = { 0 };
+
+	this->filePath.MaximumLength = filePath->Length;
+	this->filePath.Buffer = nullptr;
+
+
+	this->filePath.Buffer = (wchar_t*)ExAllocatePool2(POOL_FLAG_PAGED, filePath->Length + 2, 'nskm');
+	if (this->filePath.Buffer == nullptr) {
+		KdPrint(("[-] Could not allocate memory to unicode string.\n"));
+		return;
+	}
+	RtlZeroMemory(this->filePath.Buffer, filePath->Length + 1);
+	
+	RtlCopyUnicodeString(&this->filePath, filePath);
+
+	FileWrapper FileObject(this->filePath.Buffer);
+	this->BaseAddress = FileObject.ReadFile();
+	this->FileSize = FileObject.getFileSize();
+
+
+	if (this->BaseAddress == nullptr) {
+		KdPrint(("[NASTYWARE WDM DRIVER]> Error reading file\n"));
+		return;
+	}
+
+	this->FileSize = FileObject.getFileSize();
+	this->DosHeader = (PIMAGE_DOS_HEADER)this->BaseAddress;
+	this->NtHeaders64 = (PIMAGE_NT_HEADERS64)((DWORD_PTR)this->BaseAddress + this->DosHeader->e_lfanew);
+	this->pSech64 = (PIMAGE_SECTION_HEADER)IMAGE_FIRST_SECTION(this->NtHeaders64);
+
+
+	if (this->NtHeaders64->OptionalHeader.Magic == 0x10b) {
+		this->is32bit = true;
+		this->NtHeaders32 = (PIMAGE_NT_HEADERS32)((DWORD_PTR)this->BaseAddress + this->DosHeader->e_lfanew);
+		this->pSech32 = (PIMAGE_SECTION_HEADER)IMAGE_FIRST_SECTION(NtHeaders32);
+		this->NtHeaders64 = nullptr;
+		this->pSech64 = nullptr;
+		KdPrint(("[+] 32 bit executable identified\n"));
+	}
+	else if (this->NtHeaders64->OptionalHeader.Magic == 0x20b) {
+		this->is64bit = true;
+		this->NtHeaders64 = (PIMAGE_NT_HEADERS64)((DWORD_PTR)this->BaseAddress + this->DosHeader->e_lfanew);
+		this->pSech64 = (PIMAGE_SECTION_HEADER)IMAGE_FIRST_SECTION(NtHeaders64);
+		this->NtHeaders32 = nullptr;
+		this->pSech32 = nullptr;
+		KdPrint(("[+] 64 bit executable identified\n"));
+	}
+	else {
+		KdPrint(("[-] File is not 32 nor 64 bit\n"));
+		return;
+	}
+
+	// Add importlist
+	this->ImportList = (PIMPORT_ENTRY)ExAllocatePool2(POOL_FLAG_PAGED, this->ImportListSize, 'nskm');
+	if (this->ImportList == nullptr) {
+		KdPrint(("[NASTYWARE WDM DRIVER]> Error allocating memory for import list\n"));
+		return;
+	}
+
+	this->prepare();
+
+}
+
+UNICODE_STRING PEParser::get_file_path() const {
+	return this->filePath;
+}
+
+PIMPORT_ENTRY PEParser::get_import_list() const {
+	return this->ImportList;
+}
+
+void PEParser::cleanup() {
+	if (this->BaseAddress != nullptr)
+		ExFreePool(this->BaseAddress);
+	if (this->ImportList != nullptr)
+		ExFreePool(this->ImportList);
+	if (this->filePath.Buffer != nullptr)
+		ExFreePool(this->filePath.Buffer);
+}
+
+PEParser::~PEParser() {
+	this->cleanup();
+}
+
+bool PEParser::ispe() const {
+	char* tempBase = (char*)this->BaseAddress;
+	if (tempBase[0] == 'M' && tempBase[1] == 'Z')
+		return true;
+
+	return false;
 }
 
 bool PEParser::prepare() {
