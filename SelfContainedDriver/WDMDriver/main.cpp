@@ -4,6 +4,7 @@
 #include "Auxiliary.h"
 #include "FunctionEntry.h"
 #include "FileWrapper.h"
+#include "ProcessWrapper.h"
 
 #define YARA_RULES_PATH L"\\??\\C:\\Users\\hacker\\Desktop\\yara_easy.txt"
 
@@ -58,7 +59,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath) 
 	return retStatus;
 }
 
-
 void DriverUnloadRoutine(PDRIVER_OBJECT) {
 	PsSetCreateProcessNotifyRoutineEx(CreateProcessHook, TRUE);
 	ExFreePool(Globals_g.yara_file_data);
@@ -70,6 +70,17 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 	UNREFERENCED_PARAMETER(EProcess);
 	UNREFERENCED_PARAMETER(ProcessId);
 	if (CreateInfo) {
+	
+		/*HANDLE CurrentProcessId = CreateInfo->ParentProcessId;
+
+		while (CurrentProcessId != 0) {
+			ProcessWrapper ParentProcess(CurrentProcessId);
+			KdPrint(("Parent Process Id: %lld\n\tPParent Process Id: %lld\n", ParentProcess.get_unique_process_id(),
+				ParentProcess.get_inherited_from_unique_process_id()));
+			CurrentProcessId = UlongToHandle((ULONG)ParentProcess.get_inherited_from_unique_process_id());
+		}
+		*/
+
 
 		PEParser PEFile(CreateInfo->ImageFileName);
 		PIMPORT_ENTRY ImportList = PEFile.get_import_list();
@@ -78,6 +89,7 @@ void CreateProcessHook(PEPROCESS EProcess, HANDLE ProcessId, PPS_CREATE_NOTIFY_I
 		bool ret = process_rules(Globals_g.yara_file_data, Globals_g.yara_file_size, ImportList);
 		if (ret) {
 			KdPrint(("[+] Possible malware: %wZ\n", PEFile.get_file_path()));
+			CreateInfo->CreationStatus = STATUS_ACCESS_DENIED;
 		}
 
 

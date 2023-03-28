@@ -239,7 +239,7 @@ bool PEParser::get_function_import_list64() {
 		if (thunkData == nullptr) {
 			break;
 		}
-
+		
 		for (int i = 0; thunkData->u1.AddressOfData != 0 && ImportListIndex < 1024; i++) {
 			
 			rva_thunk_data = this->rva_2_offset((DWORD)(thunkData->u1.AddressOfData + 2), pSech64, NtHeaders64);
